@@ -1,0 +1,142 @@
+\sheet{2}{OpenMP basics, cores, and placement}{1h30}
+\section{Preparation}
+Define \textbf{physical core}, \textbf{logical processor}, \textbf{thread},
+\textbf{parallel region}, \textbf{worksharing}, \textbf{reduction} and
+\textbf{affinity}. Draw one process with several threads and indicate their
+shared address space. Distinguish shared reading from conflicting writes.
+
+Sources are in \code{02-openmp-basic}. Each file has its own
+\code{main}; the implementations of other exercises are not required. B3 is
+supplied in full for observation. Commands run from this \code{02-openmp-basic} directory:
+\begin{lstlisting}[style=shell]
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+\end{lstlisting}
+Use the allocated CPUs only. \code{OMP_NUM_THREADS} requests a team size;
+\code{OMP_DYNAMIC=false} disables dynamic team-size adjustment, but other limits
+may still apply. Environment assignments before a command apply to that launch.
+Rebuild after edits. Each numerical program checks the requested input before reporting timings.
+
+This folder contains its own CMake files and utility headers; it can be copied
+and compiled independently. Numerical sizes are freely chosen integers within
+the ranges listed in \code{README.md}; the examples are not a predefined menu.
+For programs whose usage lists \code{--self-test}, add that flag to run extra
+small and edge cases before the requested input. Without it, only the requested
+size is checked and measured. Rebuild after changing the implementation.
+
+\section{Exercises}
+\exercise{B1}{Distributing an independent loop}
+Edit \code{B1-affine.cpp}. The required operation is $y_i=2x_i+1$ on separate
+input and output arrays. An ordinary loop inside a parallel region is executed
+in full by every thread. Writing the same value concurrently does not remove a race.
+\begin{enumerate}
+\item Analyse this incorrect fragment without executing it:
+\begin{lstlisting}
+#pragma omp parallel
+{
+    for (std::size_t i = 0; i < n; ++i)
+        y[i] = 2*x[i] + 1;
+}
+\end{lstlisting}
+With four threads and eight elements, how many times is each iteration attempted?
+Identify the missing construct.
+\item Implement \code{affine} using a worksharing loop and
+\code{default(none)}. Specify the data-sharing attributes that need clauses.
+Explain why the associated loop index is private and why each output has one writer.
+\item Build and run:
+\begin{lstlisting}[style=shell]
+cmake --build build --target b1_affine -j
+OMP_NUM_THREADS=4 OMP_DYNAMIC=false ./build/bin/b1_affine 1048576 7
+\end{lstlisting}
+The arguments are length and trials. The supplied opening parallel region prints
+one complete line per thread inside a critical region. Explain why the order of
+these lines can vary. Keep printing outside arithmetic timings.
+\item Repeat with 1, 2 and 4 requested threads. Add \code{--self-test} to check empty input and
+uneven small lengths. For seven elements and three threads, justify correctness
+without assuming equal chunks or a particular assignment.
+\end{enumerate}
+
+\exercise{B2}{Reduction, atomic updates and critical regions}
+Edit \code{B2-dot.cpp}. The dot product is $d=\sum_i x_i y_i$.
+The products are independent, but every contribution must enter the final sum.
+\begin{enumerate}
+\item Starting with zero and contributions 2 and 5, draw an interleaving of
+ordinary reads and writes that loses a contribution. Explain why a barrier
+after such a loop cannot repair the race.
+\item Implement \code{dot_reduction} with an addition reduction. Initialise
+the original result to zero. OpenMP creates private contributions and combines
+them before the function returns.
+\item Implement \code{dot_atomic} and \code{dot_critical} with one protected
+shared update per element. Use an atomic update and a named critical region,
+respectively. These versions intentionally coordinate every addition.
+\item Build and run:
+\begin{lstlisting}[style=shell]
+cmake --build build --target b2_dot -j
+OMP_NUM_THREADS=4 OMP_DYNAMIC=false ./build/bin/b2_dot 1048576 7
+\end{lstlisting}
+The arguments are length and trials. All three functions in this file must be
+implemented. Checks compare each result with a reference; floating-point tolerance
+allows rounding differences from regrouping.
+\item Repeat with 1, 2 and 4 threads. Record the actual team size, median and
+range for each variant. Calculate $S_p=T_1/T_p$ and $E_p=S_p/p$ using each
+variant's own one-thread time. Explain why more threads can make a correct
+implementation slower through coordination overhead or limited memory bandwidth.
+\end{enumerate}
+
+\exercise{B3}{Observing thread placement}
+Run the supplied \code{B3-affinity.cpp}. On Linux, identify the allowed logical
+CPUs and their core/socket membership:
+\begin{lstlisting}[style=shell]
+lscpu -e
+taskset -pc $$
+cmake --build build --target b3_affinity -j
+\end{lstlisting}
+Two logical processors may share a physical core. Use both socket and core IDs
+when identifying distinct cores.
+\begin{enumerate}
+\item Compare placement policies:
+\begin{lstlisting}[style=shell]
+OMP_NUM_THREADS=4 OMP_DYNAMIC=false OMP_PLACES=cores \
+  OMP_PROC_BIND=false ./build/bin/b3_affinity 100000
+OMP_NUM_THREADS=4 OMP_DYNAMIC=false OMP_PLACES=cores \
+  OMP_PROC_BIND=close ./build/bin/b3_affinity 100000
+OMP_NUM_THREADS=4 OMP_DYNAMIC=false OMP_PLACES=cores \
+  OMP_PROC_BIND=spread ./build/bin/b3_affinity 100000
+\end{lstlisting}
+The argument is samples per thread. Distinguish the allowed CPU set from the CPU
+observed at one instant. \code{close} and \code{spread} operate on the runtime's
+available places, so their mappings need not differ on every machine.
+\item Choose an allowed logical CPU ID and replace \code{ID} below:
+\begin{lstlisting}[style=shell]
+OMP_NUM_THREADS=4 OMP_DYNAMIC=false OMP_PROC_BIND=false \
+  taskset -c ID ./build/bin/b3_affinity 100000
+\end{lstlisting}
+Explain how four threads progress when restricted to that one logical CPU.
+Repeat with two allowed IDs separated by a comma.
+\item Rerun B2 using \code{OMP_PLACES=cores} and an explicit binding policy,
+without the one-CPU restriction. Record placement with the timings. Why does a
+correct result not prove that four distinct physical cores were used?
+\item If no CPU changes were sampled, what can and cannot be concluded?
+This diagnostic's own runtime includes sampling and printing; it is not a
+benchmark of the dot product. On non-Linux systems, use the OpenMP runtime's
+affinity display for placement observations.
+\end{enumerate}
+
+\exercise{B4}{Alignment of an address}
+Edit \code{B4-alignment.cpp}. An address is aligned to $A$ bytes when it is
+divisible by $A$. Being aligned to 8 bytes does not imply alignment to 64 bytes.
+\begin{enumerate}
+\item Implement \code{power_two_alignment} on an integer address. Return the
+largest power of two dividing a nonzero address; define the result for zero as
+zero. Do not dereference invented addresses.
+\item Predict results for 1, 6, 8, 24 and 64. Build and run:
+\begin{lstlisting}[style=shell]
+cmake --build build --target b4_alignment -j
+./build/bin/b4_alignment
+\end{lstlisting}
+The program also tests zero and a high-bit address, then prints addresses for a
+64-byte-aligned array and its second element. It takes no numerical arguments.
+\item Assuming 8-byte doubles, derive the second element's guaranteed alignment.
+Distinguish the declaration's guarantee from a larger alignment observed by chance.
+Explain why ordinary allocation respects the type's alignment but need not put
+every object on a cache-line boundary.
+\end{enumerate}
