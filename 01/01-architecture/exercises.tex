@@ -1,0 +1,124 @@
+\sheet{1}{Architecture and memory effects}{1h30}
+\section{Preparation}
+Define \textbf{register}, \textbf{instruction dependency}, \textbf{latency},
+\textbf{throughput}, \textbf{cache line}, \textbf{spatial locality} and
+\textbf{temporal locality}. Does a 3~GHz clock imply three billion completed
+instructions per second? Identify the missing information.
+
+The source files are in \code{Exercices/01-architecture}. Each file contains
+one program: the functions to complete and a supplied \code{main} that checks
+small inputs before measuring execution time. Edit the functions marked TODO.
+An unfinished function reports its name and stops; another exercise is not needed
+to run the current one.
+
+Run commands from the \code{PW} directory. Configure once:
+\begin{lstlisting}[style=shell]
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+\end{lstlisting}
+Rebuild the relevant target after every source change. With no MPI or OpenMP
+installation, add \code{-DPW_ENABLE_MPI=OFF -DPW_ENABLE_OPENMP=OFF} to configuration.
+The numerical arguments and the expected checks are explained in each section.
+
+\section{Experiments}
+\exercise{A1}{One accumulator and four independent accumulators}
+Edit \code{A1-sum.cpp}. The supplied \code{sum_one} adds an array using one
+accumulator. Each addition needs the preceding addition's result. Four separate
+accumulators can expose independent additions to the same core; this still uses
+one software thread.
+\begin{enumerate}
+\item Draw four successive updates of one accumulator. Assume addition latency
+is 4 cycles and the processor can start one independent addition per cycle.
+Derive the sustained addition rates for one chain and four chains at 3~GHz.
+Ignore loads, loop control, startup and final combination in this model.
+\item Implement \code{sum_four}. Initialise four sums, process four elements
+per main-loop iteration, then handle the remaining elements. Combine the sums
+and return the result. Trace lengths 0, 1, 3, 4 and 5 to verify coverage and bounds.
+\item Build and run:
+\begin{lstlisting}[style=shell]
+cmake --build build --target a1_sum -j
+./build/bin/a1_sum 1048576 7
+\end{lstlisting}
+The arguments are array length and trial count. The program checks empty arrays,
+short arrays and tails, then prints individual times, medians and ranges.
+Checks and printing are outside the measured kernel intervals.
+\item Compare \code{one} and \code{four} for a small array and an array larger
+than the last-level cache but comfortably within RAM. Record both medians and
+$T_{\mathrm{one}}/T_{\mathrm{four}}$. Explain why limited data delivery may hide
+an improvement in arithmetic throughput. Generated machine instructions may also
+differ from the source-level model.
+\item The program also evaluates \code{{1e16,1.0,-1e16,1.0}}. Its exact sum is 2.
+Trace the rounding for both functions. Explain why different results can occur
+without threads or data races. The ordinary input tests use exactly representable
+values; this separate example illustrates sensitivity to grouping.
+\end{enumerate}
+
+\exercise{A2}{Reading a matrix by rows and columns}
+Edit \code{A2-matrix.cpp}. A square matrix is stored in one contiguous array:
+row $r$, column $c$ is at position $r\,\mathrm{side}+c$. The supplied
+\code{matrix_rows} visits consecutive elements. A column traversal reads the
+same values in another order, with a jump of \code{side} elements between rows.
+\begin{enumerate}
+\item Draw a $4\times4$ matrix and label its storage offsets 0 to 15. List the
+first eight offsets for each traversal. Assume 8-byte doubles and aligned
+64-byte cache lines: mark the values brought in by the first line fetch.
+\item Implement \code{matrix_columns} with the column loop outside the row
+loop. Do not copy or transpose the data. Return the sum of all entries.
+\item Build and run:
+\begin{lstlisting}[style=shell]
+cmake --build build --target a2_matrix -j
+./build/bin/a2_matrix 512 7
+\end{lstlisting}
+The arguments are matrix side and trials. The checks include sides 0, 1, 3, 17
+and 65. Repeat the timings for sides 64, 512 and 2048, reducing sizes if RAM is
+limited. Compare row and column medians for identical stored data.
+\item Explain the results using immediate use of neighbours and the interval
+between later uses of the same cache line. A small cached matrix need not show
+the same difference as a large one. Check the actual cache-line size before
+applying the 64-byte model to this machine.
+\end{enumerate}
+
+\exercise{A3}{Stride and cost per useful access}
+Edit \code{A3-stride.cpp}. Stride 1 reads every element; stride 3 reads indices
+0, 3, 6, and so on. Increasing stride changes both the access pattern and the
+number of additions, so total time alone is not a fair measure of cost per access.
+\begin{enumerate}
+\item Implement \code{strided_sum} for a positive stride. Return zero for empty
+input and stop before index $n$. For $n=10$, list the visited indices for strides
+1, 3 and 16. Derive the visit count $V$; handle $n=0$ separately.
+\item Build and run:
+\begin{lstlisting}[style=shell]
+cmake --build build --target a3_stride -j
+./build/bin/a3_stride 1048576 7
+\end{lstlisting}
+The arguments are array length and trials. Small-input checks include empty
+input and a stride larger than the array. The timing run uses strides
+1, 2, 4, 8, 16, 32 and 64 at one fixed length.
+\item For median time $t$ seconds, calculate $10^9t/V$ nanoseconds per visit
+and $8V/(10^9t)$ useful GB/s for 8-byte doubles. Compare your calculation with
+the output. Explain why useful bytes do not count all physical cache-line or
+DRAM traffic.
+\item Plot time per visit against stride. Explain possible effects of cache
+capacity, prefetching and unused values on fetched lines. For 17 doubles and
+stride 4, predict the visited indices, number of visits and useful bytes.
+\end{enumerate}
+
+\exercise{A4}{Optional: tiled transpose}
+Edit \code{A4-transpose.cpp}. A transpose writes $A_{r,c}$ to $B_{c,r}$ in a
+separate output array. A simple traversal can read consecutive input values while
+writing distant output values. Small tiles can retain useful lines from both arrays.
+\begin{enumerate}
+\item Read the supplied \code{transpose_reference}. Implement
+\code{transpose_tiled} using loops over tile origins and loops inside a tile.
+Clamp the final tile to the matrix boundary; never read beyond the input.
+\item Build and run:
+\begin{lstlisting}[style=shell]
+cmake --build build --target a4_transpose -j
+./build/bin/a4_transpose 1024 7
+\end{lstlisting}
+The arguments are side and trials. The program compares every output element,
+including partial tiles, before timing the simple traversal and tile sides
+8, 16, 32 and 64.
+\item Explain why a tile that is too large or too small can lose the expected
+benefit. Compare identical matrix sizes and inspect variation before choosing
+one tile size from close measurements.
+\end{enumerate}
