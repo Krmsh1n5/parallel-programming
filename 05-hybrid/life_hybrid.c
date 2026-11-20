@@ -39,6 +39,21 @@ static int read_number(const char *text, int minimum, int maximum, int *value)
     return 1;
 }
 
+static inline _Noreturn void fail(const char *message)
+{
+    fprintf(stderr, "%s\n", message);
+    MPI_Abort(MPI_COMM_WORLD, 1); exit(EXIT_FAILURE);
+}
+
+static inline void *allocate(size_t count, size_t width)
+{
+    if (count == 0) count = 1;
+    if (count > SIZE_MAX / width) fail("Allocation size overflow.");
+    void *p = calloc(count, width);
+    if (p == NULL) fail("Allocation failed.");
+    return p;
+}
+
 static void partition(int n, int size, int *counts, int *starts)
 {
     int offset = 0;
@@ -67,46 +82,51 @@ static void exchange_halos(unsigned char *grid, int rows, int n, int rank, int s
                  MPI_COMM_WORLD, MPI_STATUS_IGNORE);
 }
 
-static int all_ok(int ok)
+static unsigned long long evolve(const unsigned char *current, unsigned char *next,
+                                 int rows, int n)
 {
-    int result;
-    MPI_Allreduce(&ok, &result, 1, MPI_INT, MPI_LAND, MPI_COMM_WORLD);
-    return result;
+    unsigned long long alive = 0;
+    size_t width = (size_t)n;
+#pragma omp parallel for schedule(static) reduction(+ : alive)
+    for (int row = 1; row <= rows; ++row) {
+        for (int col = 0; col < n; ++col) {
+            int neighbours = 0;
+            for (int dr = -1; dr <= 1; ++dr) {
+                for (int dc = -1; dc <= 1; ++dc) {
+                    int r = row + dr, c = col + dc;
+                    if ((dr != 0 || dc != 0) && c >= 0 && c < n)
+                        neighbours += current[(size_t)r * width + c];
+                }
+            }
+            size_t k = (size_t)row * width + col;
+            next[k] = (unsigned char)(neighbours == 3
+                   || (current[k] && neighbours == 2));
+            alive += next[k];
+        }
+    }
+    return alive;
 }
 
-static int export_grid(const unsigned char *owned, int n, const int *counts,
-                       const int *starts, int rank, int size)
+static void export_grid(const unsigned char *owned, int n, const int *counts,
+                        const int *starts, int rank, int size)
 {
     int *cell_counts = NULL, *cell_starts = NULL;
     unsigned char *grid = NULL;
-    int ok = 1;
     if (rank == 0) {
-        cell_counts = malloc((size_t)size * sizeof *cell_counts);
-        cell_starts = malloc((size_t)size * sizeof *cell_starts);
-        grid = malloc((size_t)n * n);
-        ok = cell_counts != NULL && cell_starts != NULL && grid != NULL;
-        if (ok) {
-            for (int r = 0; r < size; ++r) {
-                cell_counts[r] = counts[r] * n;
-                cell_starts[r] = starts[r] * n;
-            }
-        } else {
-            fprintf(stderr, "Cannot allocate the global grid.\n");
+        cell_counts = allocate((size_t)size, sizeof *cell_counts);
+        cell_starts = allocate((size_t)size, sizeof *cell_starts);
+        grid = allocate((size_t)n * n, sizeof *grid);
+        for (int r = 0; r < size; ++r) {
+            cell_counts[r] = counts[r] * n;
+            cell_starts[r] = starts[r] * n;
         }
     }
-    MPI_Bcast(&ok, 1, MPI_INT, 0, MPI_COMM_WORLD);
-    if (ok) {
-        MPI_Gatherv(owned, counts[rank] * n, MPI_UNSIGNED_CHAR,
-                    grid, cell_counts, cell_starts, MPI_UNSIGNED_CHAR,
-                    0, MPI_COMM_WORLD);
-        if (rank == 0) {
-            ok = save_pbm("life-final.pbm", grid, n);
-            if (!ok) fprintf(stderr, "Cannot write life-final.pbm.\n");
-        }
-        MPI_Bcast(&ok, 1, MPI_INT, 0, MPI_COMM_WORLD);
-    }
+    MPI_Gatherv(owned, counts[rank] * n, MPI_UNSIGNED_CHAR,
+                grid, cell_counts, cell_starts, MPI_UNSIGNED_CHAR,
+                0, MPI_COMM_WORLD);
+    if (rank == 0 && !save_pbm("life-final.pbm", grid, n))
+        fail("Cannot write life-final.pbm.");
     free(grid); free(cell_starts); free(cell_counts);
-    return ok;
 }
 
 int main(int argc, char **argv)
@@ -138,32 +158,31 @@ int main(int argc, char **argv)
         return 1;
     }
 
-    int *counts = malloc((size_t)size * sizeof *counts);
-    int *starts = malloc((size_t)size * sizeof *starts);
-    int ok = counts != NULL && starts != NULL;
-    if (ok) partition(n, size, counts, starts);
-    int rows = ok ? counts[rank] : 0, first = ok ? starts[rank] : 0;
+    int *counts = allocate((size_t)size, sizeof *counts);
+    int *starts = allocate((size_t)size, sizeof *starts);
+    partition(n, size, counts, starts);
+    int rows = counts[rank], first = starts[rank];
     size_t width = (size_t)n, local_cells = (size_t)(rows + 2) * width;
-    unsigned char *current = ok ? calloc(local_cells, 1) : NULL;
-    unsigned char *next = ok ? calloc(local_cells, 1) : NULL;
-    if (!all_ok(current != NULL && next != NULL)) {
-        if (rank == 0) fprintf(stderr, "Cannot allocate the grids.\n");
-        free(current); free(next); free(starts); free(counts);
-        MPI_Finalize();
-        return 1;
-    }
+    unsigned char *current = allocate(local_cells, sizeof *current);
+    unsigned char *next = allocate(local_cells, sizeof *next);
 
 #pragma omp parallel for schedule(static)
     for (int i = 0; i < rows; ++i)
         for (int col = 0; col < n; ++col)
             current[(size_t)(i + 1) * width + col] = initial_cell(first + i, col);
 
-    for (int step = 0; step < steps; ++step)
+    for (int step = 0; step < steps; ++step) {
         exchange_halos(current, rows, n, rank, size);
+        unsigned long long local_alive = evolve(current, next, rows, n), alive = 0;
+        MPI_Reduce(&local_alive, &alive, 1, MPI_UNSIGNED_LONG_LONG, MPI_SUM,
+                   0, MPI_COMM_WORLD);
+        unsigned char *tmp = current; current = next; next = tmp;
+        if (rank == 0) printf("step %d alive %llu\n", step + 1, alive);
+    }
 
-    ok = export_grid(current + width, n, counts, starts, rank, size);
+    export_grid(current + width, n, counts, starts, rank, size);
 
     free(current); free(next); free(starts); free(counts);
     MPI_Finalize();
-    return ok ? 0 : 1;
+    return 0;
 }
