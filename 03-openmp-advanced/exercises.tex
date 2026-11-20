@@ -1,0 +1,149 @@
+\sheet{3}{OpenMP scheduling, tasks, and synchronization}{1h30}
+\section{Preparation}
+Define \textbf{barrier}, \textbf{implicit barrier}, \textbf{task},
+\textbf{taskwait}, \textbf{cutoff}, \textbf{false sharing} and \textbf{data race}.
+For a barrier and a taskwait, identify which work must finish before execution
+continues. Give an example of correct shared-memory code with poor performance.
+
+Sources are in \code{03-openmp-advanced}. Each section has a separate
+program and can be built before the others are complete. The supplied main
+checks numerical results before measuring. Run commands from this \code{03-openmp-advanced} directory:
+\begin{lstlisting}[style=shell]
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+\end{lstlisting}
+Use a team size within the CPU allocation and rebuild the relevant target after
+editing. Complete the TODO functions in the named file; retain its supplied
+input generation and checks.
+
+This folder contains its own CMake files and utility headers; it can be copied
+and compiled independently. Numerical sizes are freely chosen integers within
+the ranges listed in \code{README.md}; the examples are not a predefined menu.
+For programs whose usage lists \code{--self-test}, add that flag to run extra
+small and edge cases before the requested input. Without it, only the requested
+size is checked and measured. Rebuild after changing the implementation.
+
+\section{Exercises}
+\exercise{C1}{Scheduling uneven work}
+Edit \code{C1-schedule.cpp}. The supplied \code{irregular_value} performs 4,000
+unsigned arithmetic updates for indices in the first quarter, and 32 for the
+other indices. Equal iteration counts therefore need not mean equal work.
+Unsigned wraparound is intentional; leave the recurrence unchanged.
+\begin{enumerate}
+\item On paper, schedule costs $(4,1,1,4,1,1)$ on two threads using
+\code{static,1} and \code{dynamic,1}. For dynamic scheduling, a free thread takes
+the next iteration; state a tie-breaking rule. Compare completion times without
+assignment overhead. Is dynamic scheduling necessarily faster in this example?
+\item Implement \code{scheduled_work}. Distribute indices with
+\code{schedule(runtime)} and write \code{irregular_value(i,n)} to \code{out[i]}.
+Each output must have one writer.
+\item Build and run:
+\begin{lstlisting}[style=shell]
+cmake --build build --target c1_schedule -j
+OMP_NUM_THREADS=4 OMP_DYNAMIC=false OMP_SCHEDULE=static \
+  ./build/bin/c1_schedule 16384 5
+\end{lstlisting}
+The arguments are length and trials. Repeat with \code{OMP_SCHEDULE} set to
+\code{static,1}, \code{dynamic,1} and \code{guided,8}. Keep input and placement fixed.
+\item Compare medians and ranges. Explain the tradeoff between imbalance,
+assignment overhead and locality. The checks compare every output, because
+changing its assigned thread must not change the required value.
+\end{enumerate}
+
+\exercise{C2}{Private histograms and merging}
+Edit \code{C2-histogram.cpp}. Input \code{x[i]} contributes to bin
+\lstinline|x[i] % bins|. Different indices can select the same bin, so an
+unsynchronized shared increment is unsafe. Separate per-thread histograms allow
+independent counting followed by a merge.
+\begin{enumerate}
+\item Compute the histogram of \code{{0,1,7,2,8}} with three bins.
+Explain why the total can be correct even if individual bins are wrong.
+\item Implement \code{histogram}. Allocate zeroed storage for participating
+threads, distribute input indices, and let each thread update its own row.
+Finish all counting before merging rows into the returned vector.
+\item Return exactly \code{bins} counters, including zeros. Empty input must
+produce an all-zero vector. If allocating for a maximum team size, do not merge
+uninitialised unused rows. Explain which barrier makes merging safe.
+\item Build and run:
+\begin{lstlisting}[style=shell]
+cmake --build build --target c2_histogram -j
+OMP_NUM_THREADS=4 OMP_DYNAMIC=false ./build/bin/c2_histogram 1048576 31 5
+\end{lstlisting}
+The arguments are length, bin count and trials. Every bin is checked, including
+for empty input and the hand example. Estimate private storage in bytes for
+$p$ threads and $b$ bins. Timings include allocation, zeroing, counting and merging;
+explain why counting-loop speedup alone does not describe the complete operation.
+\end{enumerate}
+
+\exercise{C3}{Recursive tasks and a cutoff}
+Edit \code{C3-tasks.cpp}. A range is divided into two parts until its length is
+at most \code{cutoff}; short ranges are summed serially. Too many tiny tasks can
+cost more to create than they save in arithmetic time.
+\begin{enumerate}
+\item Draw the split for 11 elements and cutoff 3. Label half-open ranges and
+verify that the leaves cover all elements once. An empty range returns zero.
+\item Implement \code{split_sum} and \code{task_sum}. Use one outer parallel
+region and one \code{single} region to start the root call. Do not create a new
+team at each recursive call.
+\item For a large range, create one child task for its left half and calculate
+the right half in the current task. Copy range parameters with
+\code{firstprivate}; share the left result variable with the child that writes it.
+Use \code{taskwait} before combining results or returning from the helper.
+Explain why the helper's stack must remain alive until the child finishes.
+\item Build and run:
+\begin{lstlisting}[style=shell]
+cmake --build build --target c3_tasks -j
+OMP_NUM_THREADS=4 OMP_DYNAMIC=false ./build/bin/c3_tasks 1048576 2048 5
+\end{lstlisting}
+The arguments are length, positive cutoff and trials. With \code{--self-test}, extra checks include empty,
+uneven and short ranges and cutoffs larger than the input. Compare cutoffs
+32, 256, 2048 and 16384 at a fixed input and team size. Explain the resulting
+balance between available tasks and task-management overhead.
+\end{enumerate}
+
+\exercise{C4}{A persistent team across Jacobi steps}
+Edit \code{C4-jacobi.cpp}. The owned values are at indices 1 through $n$;
+indices 0 and $n+1$ are fixed zeros. Each step computes
+\[u_i^{t+1}=\tfrac12(u_{i-1}^{t}+u_{i+1}^{t}).\]
+All updates must use the old array. In-place updates would change the algorithm.
+\begin{enumerate}
+\item From $(0,2,4,8,0)$, derive one step and then a second step.
+Draw the two old inputs required by each new value.
+\item Implement \code{jacobi} using two buffers and one parallel region around
+all steps. Distribute interior writes with a worksharing loop; retain its end
+barrier before swapping roles.
+\item Swap shared pointers once using \code{single}, retaining its end barrier.
+Explain the two distinct ordering requirements: finish writes, then publish the
+new pointer roles. Never modify the fixed ends.
+\item Return the final result in the caller's vector. Trace zero, one and two
+steps; an odd step count can leave the answer in the other buffer.
+\item Build and run:
+\begin{lstlisting}[style=shell]
+cmake --build build --target c4_jacobi -j
+OMP_NUM_THREADS=4 OMP_DYNAMIC=false ./build/bin/c4_jacobi 65536 20 5
+\end{lstlisting}
+The arguments are interior length, steps and trials. With \code{--self-test}, extra checks include no interior
+values, one value, and zero, odd and even step counts. The timed operation includes
+a fresh copy of the initial vector and your function; validation is excluded.
+\end{enumerate}
+
+\exercise{C5}{Optional: false sharing}
+Open \code{C5-false-sharing.cpp}. Each thread repeatedly increments its own
+atomic counter. Separate counters may still share a coherence line, so race-free
+accesses can cause ownership traffic between cores.
+\begin{enumerate}
+\item Leave \code{Packed} unchanged and add 64-byte alignment to
+\code{Separated}. Predict how this changes object spacing for a 64-byte cache-line
+model. Check the actual line size before applying the model to the machine.
+\item Build and run on distinct allocated cores:
+\begin{lstlisting}[style=shell]
+cmake --build build --target c5_false_sharing -j
+OMP_NUM_THREADS=4 OMP_DYNAMIC=false OMP_PLACES=cores \
+  OMP_PROC_BIND=spread ./build/bin/c5_false_sharing 1000000 5
+\end{lstlisting}
+The arguments are increments per thread and trials. The program checks final
+counts and prints every time sample, alignment and object size. Compute the
+median for each layout, then compare one thread with several threads.
+\item Explain why atomic increments preserve correctness but do not remove
+false sharing. Their own cost is included, so this experiment does not measure
+ordinary store cost alone. Distinguish a measured effect from a proposed cause.
+\end{enumerate}
