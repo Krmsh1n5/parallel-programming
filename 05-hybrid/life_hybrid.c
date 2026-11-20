@@ -49,6 +49,24 @@ static void partition(int n, int size, int *counts, int *starts)
     }
 }
 
+static void exchange_halos(unsigned char *grid, int rows, int n, int rank, int size)
+{
+    enum { TO_UP = 0, TO_DOWN = 1 };
+    int up = rank > 0 ? rank - 1 : MPI_PROC_NULL;
+    int down = rank + 1 < size ? rank + 1 : MPI_PROC_NULL;
+    size_t width = (size_t)n;
+    unsigned char *top_halo = grid;
+    unsigned char *first_row = grid + width;
+    unsigned char *last_row = grid + (size_t)rows * width;
+    unsigned char *bottom_halo = grid + (size_t)(rows + 1) * width;
+    MPI_Sendrecv(first_row, n, MPI_UNSIGNED_CHAR, up, TO_UP,
+                 bottom_halo, n, MPI_UNSIGNED_CHAR, down, TO_UP,
+                 MPI_COMM_WORLD, MPI_STATUS_IGNORE);
+    MPI_Sendrecv(last_row, n, MPI_UNSIGNED_CHAR, down, TO_DOWN,
+                 top_halo, n, MPI_UNSIGNED_CHAR, up, TO_DOWN,
+                 MPI_COMM_WORLD, MPI_STATUS_IGNORE);
+}
+
 static int all_ok(int ok)
 {
     int result;
@@ -139,6 +157,9 @@ int main(int argc, char **argv)
     for (int i = 0; i < rows; ++i)
         for (int col = 0; col < n; ++col)
             current[(size_t)(i + 1) * width + col] = initial_cell(first + i, col);
+
+    for (int step = 0; step < steps; ++step)
+        exchange_halos(current, rows, n, rank, size);
 
     ok = export_grid(current + width, n, counts, starts, rank, size);
 
