@@ -28,7 +28,7 @@ N | steps | MPI ranks | threads/rank | stdout match | final-grid match
 2048 | 100   | 8         | 2            | yes          | yes
 
 3. PERFORMANCE CONFIGURATION
-Machine, node count and allocated resources:
+Machine, node count and allocated resources: MacBook Pro, Apple M4 Pro, 14 cores (10P + 4E), 24 GB RAM, 1 node (previous runs: MacBook Air, Apple M4, 10 cores (4P + 6E), 24 GB RAM)
 Compiler/version and build options:
 MPI implementation, rank/thread counts and placement:
 Fixed N and step count:
@@ -38,15 +38,15 @@ Resource count used for parallel efficiency:
 
 mode | ranks | threads/rank | nodes | run 1 (s) | run 2 (s) | run 3 (s) | median (s) | speedup | efficiency (%)
 -----|-------|--------------|-------|-----------|-----------|-----------|------------|---------|---------------
-seq  | 1     | 1            | 1     | 6.21      | 6.27      | 6.19      | 6.21       | 1.00    | 100
-par  | 1     | 1            | 1     | 9.02      | 9.05      | 9.05      | 9.05       | 0.69    | 69
-par  | 1     | 2            | 1     | 5.22      | 5.45      | 5.25      | 5.25       | 1.18    | 59
-par  | 2     | 1            | 1     | 5.31      | 5.61      | 5.32      | 5.32       | 1.17    | 58
-par  | 2     | 2            | 1     | 3.73      | 3.97      | 3.74      | 3.74       | 1.66    | 42
-par  | 4     | 1            | 1     | 3.50      | 3.74      | 3.58      | 3.58       | 1.74    | 43
-par  | 4     | 2            | 1     | 2.90      | 2.96      | 2.96      | 2.96       | 2.10    | 26
-par  | 2     | 4            | 1     | 2.92      | 3.07      | 3.00      | 3.00       | 2.07    | 26
-par  | 8     | 1            | 1     | 3.50      | 3.58      | 3.42      | 3.50       | 1.78    | 22
+seq  | 1     | 1            | 1     | 6.00      | 6.13      | 6.14      | 6.13       | 1.00    | 100
+par  | 1     | 1            | 1     | 8.78      | 8.82      | 9.12      | 8.82       | 0.70    | 70
+par  | 1     | 2            | 1     | 5.06      | 5.11      | 5.15      | 5.11       | 1.20    | 60
+par  | 2     | 1            | 1     | 5.15      | 5.21      | 5.27      | 5.21       | 1.18    | 59
+par  | 2     | 2            | 1     | 3.23      | 3.22      | 3.25      | 3.23       | 1.90    | 47
+par  | 4     | 1            | 1     | 2.92      | 2.91      | 2.89      | 2.91       | 2.11    | 53
+par  | 4     | 2            | 1     | 1.97      | 1.97      | 1.92      | 1.97       | 3.11    | 39
+par  | 2     | 4            | 1     | 2.05      | 2.05      | 2.09      | 2.05       | 2.99    | 37
+par  | 8     | 1            | 1     | 2.79      | 2.76      | 2.77      | 2.77       | 2.21    | 28
 
 4. SHORT DISCUSSION
 Discuss the observed scaling using your measured results.
