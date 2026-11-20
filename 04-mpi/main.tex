@@ -1,0 +1,33 @@
+\documentclass[a4paper,11pt]{article}
+\usepackage[T1]{fontenc}
+\usepackage[utf8]{inputenc}
+\usepackage{lmodern}
+\usepackage[a4paper,margin=22mm]{geometry}
+\usepackage{amsmath,amssymb}
+\usepackage{xcolor,listings,enumitem,fancyhdr}
+\usepackage[hidelinks]{hyperref}
+\setlength{\parindent}{0pt}
+\setlength{\parskip}{5pt}
+\setlength{\headheight}{14pt}
+\setlist[enumerate]{leftmargin=*,itemsep=3pt,topsep=4pt}
+\setlist[itemize]{leftmargin=*,itemsep=2pt,topsep=3pt}
+\pagestyle{fancy}
+\fancyhf{}\fancyhead[L]{UFAZ -- Parallel Programming}\fancyhead[R]{Practical Work}
+\fancyfoot[C]{\thepage}
+\lstdefinestyle{cpp}{language=C,basicstyle=\small\ttfamily,
+ keywordstyle=\bfseries,commentstyle=\itshape\color{black!60},
+ stringstyle=\color{black!70},numbers=left,numberstyle=\tiny\color{black!50},
+ numbersep=7pt,frame=single,rulecolor=\color{black!35},backgroundcolor=\color{black!2},
+ keepspaces=true,columns=fullflexible,breaklines=true,breakatwhitespace=true,
+ showstringspaces=false,tabsize=4,xleftmargin=1.5em,framexleftmargin=0.3em}
+\lstdefinestyle{shell}{style=cpp,language=bash,numbers=none,xleftmargin=0pt,framexleftmargin=0pt}
+\lstset{style=cpp}
+\newcommand{\code}[1]{\texttt{\detokenize{#1}}}
+\newcommand{\sheet}[3]{\clearpage\setcounter{section}{0}\renewcommand{\theHsection}{#1.\arabic{section}}\begin{center}
+ {\Large\bfseries Practical #1: #2}\\[4pt]{Duration: #3}\end{center}\vspace{3pt}}
+\newcommand{\important}[1]{\par\smallskip\noindent\fcolorbox{black!40}{black!5}{\parbox{\dimexpr\linewidth-2\fboxsep-2\fboxrule}{#1}}\par\smallskip}
+\newcommand{\exercise}[2]{\subsection*{#1. #2}}
+\setlength{\emergencystretch}{3em}
+\begin{document}
+\input{exercises}
+\end{document}

@@ -1,0 +1,146 @@
+\sheet{4}{MPI processes and message protocols}{1h30}
+\section{Preparation}
+Define \textbf{process}, \textbf{rank}, \textbf{communicator}, \textbf{tag},
+\textbf{collective}, \textbf{request} and \textbf{deadlock}. Draw two processes
+and their separate arrays. Explain why changing one array does not change the
+other automatically, and why four ranks do not imply four machines.
+
+Sources are in \code{04-mpi}. D1--D4 are independent programs;
+D5 measures D2. Every file has its own MPI initialization, numerical checks and
+\code{main}. Use the MPI C interface from C and matching compiler/launcher
+installations. Commands run from this \code{04-mpi} directory:
+\begin{lstlisting}[style=shell]
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+\end{lstlisting}
+On a cluster, use its allocation and launcher settings. Rebuild after edits.
+If a run hangs, stop it and compare the message/collective sequence across ranks
+before trying a larger input.
+
+Each C source is a self-contained program: arrays, allocation, checks and
+timing are visible in that file. No course-specific header is needed. Complete
+the functions marked TODO; an unfinished function reports its name and exits.
+The numerical arguments are optional; their ranges and defaults are listed in
+\code{README.md}. Each run checks the requested case. Run small and edge cases
+explicitly by changing the arguments, then measure representative larger inputs.
+
+\section{Exercises}
+\exercise{D1}{Distributing an uneven input}
+Edit \code{D1-distribute.c}. Rank 0 initially owns the complete input.
+For global length $N$ and $P$ ranks, use counts and displacements
+\[n_r=\lfloor N/P\rfloor+[r<N\bmod P],\qquad d_0=0,\quad d_{r+1}=d_r+n_r.\]
+The supplied \code{partition} function fills the count and displacement arrays.
+The caller's local length and start are \code{counts[rank]} and \code{displs[rank]}. The bracket contributes one when its condition is true.
+\begin{enumerate}
+\item Draw and tabulate counts, displacements and owned global indices for
+$N=10,P=3$ and $N=2,P=4$. Verify coverage without overlap. Explain the empty blocks.
+\item Implement \code{distribute}. The supplied main allocates the arrays and
+passes the local length, counts and displacements. Call \code{MPI_Scatterv}. Root supplies the global elements, counts and displacements;
+every rank supplies its own receive storage and count.
+\item Pass the array pointer as the buffer argument: send its elements, not the
+bytes of the pointer variable itself. For a double datatype, displacement 4 selects element
+4, not byte 4. Every rank participates even when its count is zero.
+\item Build and run:
+\begin{lstlisting}[style=shell]
+cmake --build build --target d1_distribute -j
+mpiexec -n 3 ./build/bin/d1_distribute 10
+mpiexec -n 4 ./build/bin/d1_distribute 2
+\end{lstlisting}
+The argument is global length. The program checks local values and prints each
+rank's count and start. Also run empty global input and uneven blocks.
+Explain why root-only preparation does not imply a root-only collective call.
+\end{enumerate}
+
+\exercise{D2}{Local calculation, reduction and gathering}
+Edit \code{D2-vectors.c}. This separate program distributes both $x$ and $y$,
+computes $z_i=2x_i+1$ locally and returns the global dot product on every rank.
+It gathers $z$ at rank 0. Reuse your distribution reasoning from D1 in this file.
+\begin{enumerate}
+\item Implement \code{distributed_vectors}. Obtain the partition, allocate
+local storage and scatter $x$ and then $y$. Calculate a local affine vector and
+partial dot product using ordinary loops. Empty blocks contribute sum zero.
+\item Combine one scalar per rank with \code{MPI_Allreduce} and addition.
+Return the resulting scalar from \code{distributed_vectors} on every rank.
+\item The supplied main allocates \code{gathered} only at root. Use
+\code{MPI_Gatherv} with the original counts and displacements to fill this
+output array. Other ranks receive a \code{NULL} output argument, ignored by MPI.
+\item Write the common sequence: scatter $x$, scatter $y$, all-reduce, gather.
+Explain why all ranks, including empty ones, must follow it compatibly.
+\item Build and run:
+\begin{lstlisting}[style=shell]
+cmake --build build --target d2_vectors -j
+mpiexec -n 3 ./build/bin/d2_vectors 17 3
+\end{lstlisting}
+The arguments are global length and trials. Checks verify the dot product on
+every rank and every gathered element. Repeat with 1, 2 and 4 ranks. For
+$x=(0,1,2,3,4)$ and three ranks, predict the counts and gathered $z$ before running.
+\end{enumerate}
+
+\exercise{D3}{A blocking ring exchange}
+Edit \code{D3-ring-blocking.c}. The C function receives two output pointers,
+\code{from_left} and \code{from_right}; write their pointed-to values. Rank $r$ sends one value to both neighbours
+and obtains their original values. In a ring, left is $(r+P-1)\bmod P$ and
+right is $(r+1)\bmod P$.
+\begin{enumerate}
+\item Draw three ranks with initial values $r+1$. Label one set of arrows
+sending right and another sending left. Use a distinct tag for each direction.
+Predict rank 0's two received values.
+\item Implement \code{ring_exchange} with two \code{MPI_Sendrecv} calls.
+Send right while receiving from the left, then reverse directions. Keep the
+original send value separate from both received outputs.
+\item Build and run:
+\begin{lstlisting}[style=shell]
+cmake --build build --target d3_ring -j
+mpiexec -n 3 ./build/bin/d3_ring
+\end{lstlisting}
+The program takes no numerical arguments and checks several input values.
+Repeat with one and two ranks: explain matching when a neighbour is the caller
+itself or when both neighbours are the same process.
+\item Explain why a standard blocking send on every rank followed by receives
+can deadlock. Success with a small buffered message does not establish a correct
+protocol for larger messages.
+\end{enumerate}
+
+\exercise{D4}{A nonblocking ring exchange}
+Edit \code{D4-ring-nonblocking.c}. This is a separate executable with the same
+input/output contract as D3. A nonblocking start returns before completion is
+established; buffer access rules continue to apply after that return.
+\begin{enumerate}
+\item Implement \code{ring_exchange} by posting two receives and two sends.
+Use the same neighbours and tag convention as D3. Retain all four requests.
+\item Call \code{MPI_Waitall} before returning. Keep send storage alive and
+unchanged until both sends complete. Do not access either receive buffer until
+its receive completes. Both sends may read the same unchanged original value.
+\item Build and run:
+\begin{lstlisting}[style=shell]
+cmake --build build --target d4_ring -j
+mpiexec -n 3 ./build/bin/d4_ring
+\end{lstlisting}
+Repeat with one, two and four ranks. A completed send makes its local buffer
+reusable; it does not establish that the remote application has finished using
+the received data.
+\item Draw the interval from initiation to completion for each buffer. Identify
+what unrelated computation could be done safely in that interval. This ring has
+little useful work to overlap; a nonblocking name alone does not imply speedup.
+\end{enumerate}
+
+\exercise{D5}{Measuring the distributed vector calculation}
+Use \code{d2_vectors}; no additional source file is needed. The timed region
+includes local allocation, both scatters, local arithmetic, all-reduction and
+gathering. Input generation, checking, printing and timing aggregation are excluded.
+Each trial reports the maximum rank interval; the summary takes the median across
+those maxima. One initial run is discarded as warm-up.
+\begin{enumerate}
+\item Keep the global length fixed and run with 1, 2 and 4 ranks within the
+allocation, for example:
+\begin{lstlisting}[style=shell]
+mpiexec -n 4 ./build/bin/d2_vectors 1048576 7
+\end{lstlisting}
+Record whether the ranks run on one or several machines, their placement, median
+and range. Use the same build and numerical requirements.
+\item Calculate $S_P=T_1/T_P$ and $E_P=S_P/P$ relative to the same MPI program
+with one rank. Plot time or speedup. Explain which communication costs remain
+when local arithmetic shrinks.
+\item Repeat at a second fixed global length. Explain why a timing of only
+rank 0's arithmetic would answer a different question. Do not infer network cost
+or multi-node performance from a localhost result alone.
+\end{enumerate}
