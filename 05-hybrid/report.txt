@@ -1,0 +1,37 @@
+PROJECT 5 — GAME OF LIFE
+Name(s):
+Source file(s):
+
+1. IMPLEMENTATION
+Explain your decomposition, initialization, communication, synchronization,
+population counting and final-image export. Refer to your own source code.
+Include a labelled diagram of one uneven row partition.
+
+2. VALIDATION
+Record the tested configurations and comparisons against the reference.
+N | steps | MPI ranks | threads/rank | stdout match | final-grid match
+--|-------|-----------|--------------|--------------|-----------------
+  |       |           |              |              |
+  |       |           |              |              |
+  |       |           |              |              |
+
+3. PERFORMANCE CONFIGURATION
+Machine, node count and allocated resources:
+Compiler/version and build options:
+MPI implementation, rank/thread counts and placement:
+Fixed N and step count:
+Timing method and precision:
+Scope: whole-program wall time, including output and MPI startup/exit.
+Resource count used for parallel efficiency:
+
+mode | ranks | threads/rank | nodes | run 1 (s) | run 2 (s) | run 3 (s) | median (s) | speedup | efficiency (%)
+-----|-------|--------------|-------|-----------|-----------|-----------|------------|---------|---------------
+seq  | 1     | 1            | 1     |           |           |           |            | 1.00    | 100
+par  |       |              |       |           |           |           |            |         |
+par  |       |              |       |           |           |           |            |         |
+par  |       |              |       |           |           |           |            |         |
+par  |       |              |       |           |           |           |            |         |
+
+4. SHORT DISCUSSION
+Discuss the observed scaling using your measured results.
+Identify a limitation of the experiment.

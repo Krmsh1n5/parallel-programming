@@ -1,0 +1,148 @@
+#include <errno.h>
+#include <limits.h>
+#include <stdint.h>
+#include <stdio.h>
+#include <stdlib.h>
+
+#include <mpi.h>
+
+static unsigned char initial_cell(int row, int col)
+{
+    uint32_t x = (uint32_t)row * 747796405u
+               ^ (uint32_t)col * 2891336453u ^ 12345u;
+    x ^= x >> 16;
+    return (unsigned char)(x % 5u == 0);
+}
+
+static int save_pbm(const char *name, const unsigned char *grid, int n)
+{
+    FILE *file = fopen(name, "w");
+    if (file == NULL) return 0;
+    fprintf(file, "P1\n%d %d\n", n, n);
+    for (int row = 0; row < n; ++row)
+        for (int col = 0; col < n; ++col)
+            fprintf(file, "%d%c", grid[(size_t)row * n + col],
+                    col + 1 == n || (col + 1) % 32 == 0 ? '\n' : ' ');
+    int ok = !ferror(file);
+    if (fclose(file) != 0) ok = 0;
+    return ok;
+}
+
+static int read_number(const char *text, int minimum, int maximum, int *value)
+{
+    char *end;
+    errno = 0;
+    long x = strtol(text, &end, 10);
+    if (errno || *text == '\0' || *end != '\0' || x < minimum || x > maximum)
+        return 0;
+    *value = (int)x;
+    return 1;
+}
+
+static void partition(int n, int size, int *counts, int *starts)
+{
+    int offset = 0;
+    for (int r = 0; r < size; ++r) {
+        counts[r] = n / size + (r < n % size);
+        starts[r] = offset;
+        offset += counts[r];
+    }
+}
+
+static int all_ok(int ok)
+{
+    int result;
+    MPI_Allreduce(&ok, &result, 1, MPI_INT, MPI_LAND, MPI_COMM_WORLD);
+    return result;
+}
+
+static int export_grid(const unsigned char *owned, int n, const int *counts,
+                       const int *starts, int rank, int size)
+{
+    int *cell_counts = NULL, *cell_starts = NULL;
+    unsigned char *grid = NULL;
+    int ok = 1;
+    if (rank == 0) {
+        cell_counts = malloc((size_t)size * sizeof *cell_counts);
+        cell_starts = malloc((size_t)size * sizeof *cell_starts);
+        grid = malloc((size_t)n * n);
+        ok = cell_counts != NULL && cell_starts != NULL && grid != NULL;
+        if (ok) {
+            for (int r = 0; r < size; ++r) {
+                cell_counts[r] = counts[r] * n;
+                cell_starts[r] = starts[r] * n;
+            }
+        } else {
+            fprintf(stderr, "Cannot allocate the global grid.\n");
+        }
+    }
+    MPI_Bcast(&ok, 1, MPI_INT, 0, MPI_COMM_WORLD);
+    if (ok) {
+        MPI_Gatherv(owned, counts[rank] * n, MPI_UNSIGNED_CHAR,
+                    grid, cell_counts, cell_starts, MPI_UNSIGNED_CHAR,
+                    0, MPI_COMM_WORLD);
+        if (rank == 0) {
+            ok = save_pbm("life-final.pbm", grid, n);
+            if (!ok) fprintf(stderr, "Cannot write life-final.pbm.\n");
+        }
+        MPI_Bcast(&ok, 1, MPI_INT, 0, MPI_COMM_WORLD);
+    }
+    free(grid); free(cell_starts); free(cell_counts);
+    return ok;
+}
+
+int main(int argc, char **argv)
+{
+    int provided, rank, size;
+    MPI_Init_thread(&argc, &argv, MPI_THREAD_FUNNELED, &provided);
+    MPI_Comm_rank(MPI_COMM_WORLD, &rank);
+    MPI_Comm_size(MPI_COMM_WORLD, &size);
+    if (provided < MPI_THREAD_FUNNELED) {
+        if (rank == 0) fprintf(stderr, "MPI does not support MPI_THREAD_FUNNELED.\n");
+        MPI_Finalize();
+        return 1;
+    }
+
+    int n = 64, steps = 20;
+    if (argc > 3
+        || (argc > 1 && !read_number(argv[1], 1, 46340, &n))
+        || (argc > 2 && !read_number(argv[2], 0, INT_MAX, &steps))) {
+        if (rank == 0)
+            fprintf(stderr, "Usage: %s [N [steps]] (1 <= N <= 46340, steps >= 0)\n", argv[0]);
+        MPI_Finalize();
+        return 1;
+    }
+    if (size > n) {
+        if (rank == 0)
+            fprintf(stderr, "Cannot run %d ranks on %d rows: the rank count must not exceed N.\n",
+                    size, n);
+        MPI_Finalize();
+        return 1;
+    }
+
+    int *counts = malloc((size_t)size * sizeof *counts);
+    int *starts = malloc((size_t)size * sizeof *starts);
+    int ok = counts != NULL && starts != NULL;
+    if (ok) partition(n, size, counts, starts);
+    int rows = ok ? counts[rank] : 0, first = ok ? starts[rank] : 0;
+    size_t width = (size_t)n, local_cells = (size_t)(rows + 2) * width;
+    unsigned char *current = ok ? calloc(local_cells, 1) : NULL;
+    unsigned char *next = ok ? calloc(local_cells, 1) : NULL;
+    if (!all_ok(current != NULL && next != NULL)) {
+        if (rank == 0) fprintf(stderr, "Cannot allocate the grids.\n");
+        free(current); free(next); free(starts); free(counts);
+        MPI_Finalize();
+        return 1;
+    }
+
+#pragma omp parallel for schedule(static)
+    for (int i = 0; i < rows; ++i)
+        for (int col = 0; col < n; ++col)
+            current[(size_t)(i + 1) * width + col] = initial_cell(first + i, col);
+
+    ok = export_grid(current + width, n, counts, starts, rank, size);
+
+    free(current); free(next); free(starts); free(counts);
+    MPI_Finalize();
+    return ok ? 0 : 1;
+}
