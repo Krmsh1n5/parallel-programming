@@ -87,7 +87,8 @@ static unsigned long long evolve(const unsigned char *current, unsigned char *ne
 {
     unsigned long long alive = 0;
     size_t width = (size_t)n;
-#pragma omp parallel for schedule(static) reduction(+ : alive)
+#pragma omp parallel for collapse(2) default(none) shared(current, next, rows, n, width) \
+    schedule(static) reduction(+ : alive)
     for (int row = 1; row <= rows; ++row) {
         for (int col = 0; col < n; ++col) {
             int neighbours = 0;
@@ -166,7 +167,7 @@ int main(int argc, char **argv)
     unsigned char *current = allocate(local_cells, sizeof *current);
     unsigned char *next = allocate(local_cells, sizeof *next);
 
-#pragma omp parallel for schedule(static)
+#pragma omp parallel for default(none) shared(current, rows, n, width, first) schedule(static)
     for (int i = 0; i < rows; ++i)
         for (int col = 0; col < n; ++col)
             current[(size_t)(i + 1) * width + col] = initial_cell(first + i, col);
