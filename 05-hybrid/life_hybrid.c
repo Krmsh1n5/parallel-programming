@@ -87,7 +87,7 @@ static unsigned long long evolve(const unsigned char *current, unsigned char *ne
 {
     unsigned long long alive = 0;
     size_t width = (size_t)n;
-#pragma omp parallel for collapse(2) default(none) shared(current, next, rows, n, width) \
+#pragma omp parallel for default(none) shared(current, next, rows, n, width) \
     schedule(static) reduction(+ : alive)
     for (int row = 1; row <= rows; ++row) {
         for (int col = 0; col < n; ++col) {
