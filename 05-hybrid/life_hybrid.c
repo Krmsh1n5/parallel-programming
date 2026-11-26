@@ -87,22 +87,26 @@ static unsigned long long evolve(const unsigned char *current, unsigned char *ne
 {
     unsigned long long alive = 0;
     size_t width = (size_t)n;
-#pragma omp parallel for default(none) firstprivate(current, next, rows, n, width) \
+#pragma omp parallel for default(none) shared(current, next, rows, n, width) \
     schedule(static) reduction(+ : alive)
     for (int row = 1; row <= rows; ++row) {
-        for (int col = 0; col < n; ++col) {
+        const int cols = n;
+        const size_t w = width;
+        const unsigned char *cur = current;
+        unsigned char *nxt = next;
+        for (int col = 0; col < cols; ++col) {
             int neighbours = 0;
             for (int dr = -1; dr <= 1; ++dr) {
                 for (int dc = -1; dc <= 1; ++dc) {
                     int r = row + dr, c = col + dc;
-                    if ((dr != 0 || dc != 0) && c >= 0 && c < n)
-                        neighbours += current[(size_t)r * width + c];
+                    if ((dr != 0 || dc != 0) && c >= 0 && c < cols)
+                        neighbours += cur[(size_t)r * w + c];
                 }
             }
-            size_t k = (size_t)row * width + col;
-            next[k] = (unsigned char)(neighbours == 3
-                   || (current[k] && neighbours == 2));
-            alive += next[k];
+            size_t k = (size_t)row * w + col;
+            nxt[k] = (unsigned char)(neighbours == 3
+                   || (cur[k] && neighbours == 2));
+            alive += nxt[k];
         }
     }
     return alive;
@@ -167,7 +171,7 @@ int main(int argc, char **argv)
     unsigned char *current = allocate(local_cells, sizeof *current);
     unsigned char *next = allocate(local_cells, sizeof *next);
 
-#pragma omp parallel for default(none) firstprivate(current, rows, n, width, first) schedule(static)
+#pragma omp parallel for default(none) shared(current, rows, n, width, first) schedule(static)
     for (int i = 0; i < rows; ++i)
         for (int col = 0; col < n; ++col)
             current[(size_t)(i + 1) * width + col] = initial_cell(first + i, col);
