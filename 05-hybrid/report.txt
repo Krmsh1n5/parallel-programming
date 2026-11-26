@@ -1,3 +1,4 @@
+REPORT
 1. IMPLEMENTATION
 
 Decomposition:
@@ -29,12 +30,17 @@ for missing neighbours, so the external halo rows remain zero.
 
 Synchronization:
 The evolve() function parallelizes the outer row loop with OpenMP and
-static scheduling. The archived implementation uses firstprivate for
-pointers and scalar parameters, while the underlying grids remain shared.
-An alternative using shared was also tested. Double buffering separates
-reads from writes, and the implicit barrier ensures all threads finish
-before the buffers are swapped. MPI_THREAD_FUNNELED is used because only
-the initializing thread of each rank calls MPI functions.
+static scheduling. The final implementation uses shared with explicit
+local copies of current, next, n and width (cur, nxt, cols and w) at
+the beginning of each row. Only pointer values and scalar parameters
+are copied; the underlying grids remain shared within each rank.
+Initialization also uses shared. Plain shared and firstprivate variants
+were tested for comparison.
+
+Double buffering separates reads from writes, and the implicit barrier
+ensures all threads finish before the buffers are swapped.
+MPI_THREAD_FUNNELED is used because only the initializing thread of
+each rank calls MPI functions.
 
 Population counting:
 OpenMP reduction combines thread-local counts. MPI_Reduce with MPI_SUM
@@ -63,7 +69,9 @@ check the total number of living cells at each step, while the final-grid
 comparison also checks their exact positions. For zero steps, the output
 is the initial grid and no population lines are printed.
 
-The recorded validation table does not distinguish shared from firstprivate.
+The original 15-test table does not identify the OpenMP variant used.
+The local-copy variant also matched the serial output in the recorded
+performance and interleaved experiments (sections 3.1 and 3.5).
 
 N    | steps | MPI ranks | threads/rank | stdout match | final-grid match
 -----|-------|-----------|--------------|--------------|-----------------
@@ -101,7 +109,8 @@ independently recorded.
 MPI implementation, rank/thread counts and placement:
 Archived build: Open MPI 5.0.11. The tested layouts use 1, 2, 4 or 8 MPI
 ranks and 1, 2 or 4 threads per rank. Both shared and firstprivate were
-tested on both machines. Explicit rank binding and thread placement
+tested on both machines; a third version, shared with local copies, was
+tested on the MacBook Air only. Explicit rank binding and thread placement
 were not recorded.
 
 Fixed N and step count:
@@ -180,6 +189,25 @@ par  | 4     | 2            | 1     | 1.66      | 1.67      | 1.66      | 1.66  
 par  | 2     | 4            | 1     | 1.87      | 1.85      | 1.86      | 1.86       | 3.16    | 39
 par  | 8     | 1            | 1     | 2.74      | 2.80      | 2.79      | 2.79       | 2.10    | 26
 
+MacBook Air (Apple M4, 10 cores), shared clause with local copies
+mode | ranks | threads/rank | nodes | run 1 (s) | run 2 (s) | run 3 (s) | median (s) | speedup | efficiency (%)
+-----|-------|--------------|-------|-----------|-----------|-----------|------------|---------|---------------
+seq  | 1     | 1            | 1     | 6.16      | 6.15      | 6.17      | 6.16       | 1.00    | 100
+par  | 1     | 1            | 1     | 6.94      | 6.95      | 6.94      | 6.94       | 0.89    | 89
+par  | 1     | 2            | 1     | 4.08      | 4.15      | 4.10      | 4.10       | 1.50    | 75
+par  | 2     | 1            | 1     | 4.15      | 4.24      | 4.16      | 4.16       | 1.48    | 74
+par  | 2     | 2            | 1     | 2.93      | 3.04      | 2.95      | 2.95       | 2.09    | 52
+par  | 4     | 1            | 1     | 2.61      | 2.71      | 2.63      | 2.63       | 2.34    | 59
+par  | 4     | 2            | 1     | 2.23      | 2.25      | 2.23      | 2.23       | 2.76    | 35
+par  | 2     | 4            | 1     | 2.26      | 2.28      | 2.27      | 2.27       | 2.71    | 34
+par  | 8     | 1            | 1     | 2.61      | 2.70      | 2.62      | 2.62       | 2.35    | 29
+
+Shared with local copies (final implementation): same source as the
+shared version, except that
+the loop body copies current, next, n and width into local variables at
+the start of each row. Every run was compared with the serial output and
+matched.
+
 3.2 HARDWARE COMPARISON
 
 Cores per machine
@@ -189,8 +217,8 @@ Air (Apple M4)         | 4                 | 6                | 10
 Pro (Apple M4 Pro)     | 10                | 4                | 14
 difference (Pro - Air) | +6                | -2               | +4
 
-For both tables below, time difference = Air - Pro (positive means Pro
-is faster). Time ratio = Air / Pro. Speedup and efficiency differences
+For both tables below, time difference = Air median time - Pro median
+time (positive means the Pro takes less time). Time ratio = Air / Pro. Speedup and efficiency differences
 are Pro - Air. Speedup and efficiency use each series' own serial
 baseline; differences use the displayed rounded values.
 
@@ -255,62 +283,160 @@ par  | 4     | 2            | 8       | 1.97       | 1.66             | +0.31   
 par  | 2     | 4            | 8       | 2.05       | 1.86             | +0.19    | 1.10       | +9.3          | 2.99           | 3.16       | +0.17        | 37             | 39         | +2
 par  | 8     | 1            | 8       | 2.77       | 2.79             | -0.02    | 0.99       | -0.7          | 2.21           | 2.10       | -0.11        | 28             | 26         | -2
 
+MacBook Air: shared vs shared with local copies vs firstprivate
+mode | ranks | threads/rank | workers | shared (s) | local copies (s) | firstprivate (s) | local copies reduction (%) | firstprivate reduction (%) | diff firstprivate - local copies (s)
+-----|-------|--------------|---------|------------|------------------|------------------|----------------------------|----------------------------|-------------------------------------
+seq  | 1     | 1            | 1       | 6.21       | 6.16             | 6.16             | +0.8                       | +0.8                       | +0.00
+par  | 1     | 1            | 1       | 9.05       | 6.94             | 7.09             | +23.3                      | +21.7                      | +0.15
+par  | 1     | 2            | 2       | 5.25       | 4.10             | 4.25             | +21.9                      | +19.0                      | +0.15
+par  | 2     | 1            | 2       | 5.32       | 4.16             | 4.31             | +21.8                      | +19.0                      | +0.15
+par  | 2     | 2            | 4       | 3.74       | 2.95             | 2.99             | +21.1                      | +20.1                      | +0.04
+par  | 4     | 1            | 4       | 3.58       | 2.63             | 2.60             | +26.5                      | +27.4                      | -0.03
+par  | 4     | 2            | 8       | 2.96       | 2.23             | 2.20             | +24.7                      | +25.7                      | -0.03
+par  | 2     | 4            | 8       | 3.00       | 2.27             | 2.27             | +24.3                      | +24.3                      | +0.00
+par  | 8     | 1            | 8       | 3.50       | 2.62             | 2.70             | +25.1                      | +22.9                      | +0.08
+
+Medians from section 3.1. Reduction (%) = 100 * (shared - variant) /
+shared. A positive difference means local copies is faster. The
+sequential row is a baseline only.
+
 3.4 BEST CONFIGURATION IN EACH EXPERIMENT
 
-machine     | clause       | ranks | threads/rank | median (s) | speedup | efficiency (%)
-------------|--------------|-------|--------------|------------|---------|---------------
-MacBook Pro | shared       | 4     | 2            | 1.97       | 3.11    | 39
-MacBook Air | shared       | 4     | 2            | 2.96       | 2.10    | 26
-MacBook Air | firstprivate | 4     | 2            | 2.20       | 2.80    | 35
-MacBook Pro | firstprivate | 4     | 2            | 1.66       | 3.54    | 44
+machine     | clause               | ranks | threads/rank | median (s) | speedup | efficiency (%)
+------------|----------------------|-------|--------------|------------|---------|---------------
+MacBook Pro | shared               | 4     | 2            | 1.97       | 3.11    | 39
+MacBook Air | shared               | 4     | 2            | 2.96       | 2.10    | 26
+MacBook Air | firstprivate         | 4     | 2            | 2.20       | 2.80    | 35
+MacBook Pro | firstprivate         | 4     | 2            | 1.66       | 3.54    | 44
+MacBook Air | shared, local copies | 4     | 2            | 2.23       | 2.76    | 35
+
+3.5 INTERLEAVED RUNS ON THE MACBOOK AIR
+
+Shared, shared with local copies and firstprivate were run in alternating
+order in one session: one untimed warm-up per layout and variant, then
+three runs each, N = 4096, steps = 200. Every run was compared with the
+serial output and matched. Time ratio = variant / shared. Reduction (%) =
+100 * (shared - variant) / shared. The values differ slightly from
+section 3.1 because they were measured at a different time.
+
+ranks | threads/rank | workers | variant              | run 1 (s) | run 2 (s) | run 3 (s) | median (s) | time ratio | reduction (%)
+------|--------------|---------|----------------------|-----------|-----------|-----------|------------|------------|--------------
+1     | 1            | 1       | shared               | 8.98      | 8.95      | 9.04      | 8.98       | 1.00       | +0.0
+1     | 1            | 1       | shared, local copies | 6.95      | 6.95      | 6.95      | 6.95       | 0.77       | +22.6
+1     | 1            | 1       | firstprivate         | 7.03      | 7.04      | 7.05      | 7.04       | 0.78       | +21.6
+1     | 2            | 2       | shared               | 5.11      | 5.17      | 5.22      | 5.17       | 1.00       | +0.0
+1     | 2            | 2       | shared, local copies | 4.10      | 4.11      | 4.10      | 4.10       | 0.79       | +20.7
+1     | 2            | 2       | firstprivate         | 4.24      | 4.21      | 4.21      | 4.21       | 0.81       | +18.6
+2     | 1            | 2       | shared               | 5.25      | 5.27      | 5.33      | 5.27       | 1.00       | +0.0
+2     | 1            | 2       | shared, local copies | 4.15      | 4.21      | 4.21      | 4.21       | 0.80       | +20.1
+2     | 1            | 2       | firstprivate         | 4.28      | 4.24      | 4.28      | 4.28       | 0.81       | +18.8
+2     | 2            | 4       | shared               | 3.52      | 3.65      | 3.62      | 3.62       | 1.00       | +0.0
+2     | 2            | 4       | shared, local copies | 2.90      | 2.91      | 2.95      | 2.91       | 0.80       | +19.6
+2     | 2            | 4       | firstprivate         | 2.96      | 2.94      | 3.01      | 2.96       | 0.82       | +18.2
+4     | 1            | 4       | shared               | 3.34      | 3.48      | 3.45      | 3.45       | 1.00       | +0.0
+4     | 1            | 4       | shared, local copies | 2.64      | 2.67      | 2.66      | 2.66       | 0.77       | +22.9
+4     | 1            | 4       | firstprivate         | 2.55      | 2.58      | 2.62      | 2.58       | 0.75       | +25.2
+4     | 2            | 8       | shared               | 2.85      | 2.92      | 2.89      | 2.89       | 1.00       | +0.0
+4     | 2            | 8       | shared, local copies | 2.17      | 2.17      | 2.21      | 2.17       | 0.75       | +24.9
+4     | 2            | 8       | firstprivate         | 2.15      | 2.19      | 2.16      | 2.16       | 0.75       | +25.3
+2     | 4            | 8       | shared               | 2.88      | 2.91      | 2.96      | 2.91       | 1.00       | +0.0
+2     | 4            | 8       | shared, local copies | 2.24      | 2.33      | 2.26      | 2.26       | 0.78       | +22.3
+2     | 4            | 8       | firstprivate         | 2.30      | 2.27      | 2.29      | 2.29       | 0.79       | +21.3
+8     | 1            | 8       | shared               | 3.41      | 3.49      | 3.49      | 3.49       | 1.00       | +0.0
+8     | 1            | 8       | shared, local copies | 2.60      | 2.63      | 2.64      | 2.63       | 0.75       | +24.6
+8     | 1            | 8       | firstprivate         | 2.84      | 2.70      | 2.88      | 2.84       | 0.81       | +18.6
+
+3.6 COMPILED LOOP FUNCTION
+
+LLVM IR of the OpenMP loop function in evolve(), Apple clang 21.0.0,
+-O3 -DNDEBUG. The captured-variable count excludes the reduction variable. The last
+metric counts loads directly from captured-variable arguments. All
+instruction counts are static LLVM IR counts, not runtime measurements.
+
+metric                                 | shared | shared, local copies | firstprivate
+---------------------------------------|--------|----------------------|-------------
+IR lines                               | 304    | 216                  | 196
+load instructions                      | 35     | 22                   | 15
+store instructions                     | 12     | 10                   | 9
+captured variables passed by reference | 5      | 5                    | 0
+loads from captured-variable arguments | 11     | 6                    | 0
 
 4. SHORT DISCUSSION
 
 Scaling:
 The hybrid implementation with one rank and one thread is slower than
-the sequential reference in all four experiments, consistent with MPI
-and OpenMP overhead without useful application-level parallelism.
-Increasing the worker count reduces runtime up to the best tested
-configuration: 4 MPI ranks and 2 OpenMP threads per rank on both machines
-and with both clauses. Speedup is sublinear due to factors such as
-communication, synchronization, memory bandwidth and runtime overhead.
+the sequential reference in all five series, consistent with additional
+MPI and OpenMP overhead without the benefit of parallel computation.
+Increasing the worker count generally improves performance. The best
+tested layout in every series was 4 MPI ranks with 2 threads per rank.
 
-Layouts with the same number of workers perform differently. With
-firstprivate on the MacBook Pro, 4 ranks x 2 threads took 1.66 s,
-2 ranks x 4 threads took 1.86 s, and 8 ranks x 1 thread took 2.79 s.
-More MPI ranks create more partition boundaries, whereas OpenMP threads
-share a local grid. The measured differences suggest a benefit from
-balancing the two parallelization levels, although these timings do not
-isolate individual overheads.
+Layouts with the same number of workers can perform differently. On
+the MacBook Pro using firstprivate, the 4 x 2, 2 x 4 and 8 x 1 layouts
+took 1.66 s, 1.86 s and 2.79 s, respectively. More MPI ranks introduce
+more partition boundaries and halo communication, whereas OpenMP
+threads share the local grids within each rank. Communication,
+synchronization, memory bandwidth and runtime overhead may limit
+speedup, but their individual costs were not measured separately.
 
-Comparison of shared and firstprivate:
-The firstprivate version was faster in all eight parallel layouts on
-the MacBook Air and seven of eight on the MacBook Pro. For the best
-layout, the Air improved from 2.96 to 2.20 s (25.7% less time), and
-the Pro improved from 1.97 to 1.66 s (15.7% less time).
-On the Pro, 8 ranks x 1 thread instead changed from 2.77 to 2.79 s,
-a small increase that may reflect normal timing variability.
+Comparison of OpenMP variants:
+The firstprivate version was faster than plain shared in all eight
+parallel layouts on the MacBook Air and seven of eight on the Pro.
+For the best layout, execution time decreased from 2.96 to 2.20 s
+on the Air (25.7%) and from 1.97 to 1.66 s on the Pro (15.7%).
+The exception was 8 ranks with 1 thread on the Pro (2.77 to 2.79 s).
+The run-time ranges overlap, so this small difference is inconclusive.
 
-The firstprivate clause copies pointer values and scalar parameters
-rather than the grids themselves. This may allow different compiler
-optimizations, but the timing results alone cannot establish the cause
-of the improvement. The sequential baselines also varied between runs.
+The generated LLVM IR provides a possible explanation for the
+improvement. In the shared version, captured variables are passed by
+reference. Because unsigned char pointers may alias other objects,
+conservative alias analysis can limit the compiler's ability to keep
+captured values in registers. The shared loop contains 35 static load
+instructions, 11 directly from captured-variable arguments, compared
+with 15 and 0 in the firstprivate loop.
+
+The final implementation retains shared but creates local copies of
+current, next, n and width at the beginning of each row. Its compiled
+loop contains 22 load instructions, including 6 directly from captured
+arguments. On the Air, this version achieved performance comparable
+to firstprivate, with median differences of at most 0.15 s in the
+original runs and 0.21 s in the interleaved runs. For the best layout
+in the interleaved experiment, plain shared took 2.89 s, local copies
+2.17 s and firstprivate 2.16 s.
+
+These observations support the compiler-optimization explanation, but
+static IR counts do not measure executed instructions or establish
+the exact cause of the whole-program timing differences. The local-copy
+version was tested on the Air only. The sequential baselines also varied
+between series, so small timing differences should not be overinterpreted.
 
 Hardware comparison:
-The MacBook Pro was faster in all shared layouts and seven of eight
+The Pro was faster in all shared layouts and seven of eight
 firstprivate parallel layouts. For the best layout, the Air/Pro time
-ratio was 1.50 with shared and 1.33 with firstprivate. The Pro has more
-performance cores (10 compared with 4), which may contribute to the
-observed difference. The actual core placement was not recorded.
+ratio was 1.50 with shared and 1.33 with firstprivate.
+
+Despite the difference in hardware resources, sequential and one- or
+two-worker configurations differed by only 0.08 to 0.36 s. Both CPUs
+belong to the M4 generation, and these layouts may not fully utilize
+the Pro's additional performance cores (10 compared with 4 on the Air).
+The Pro's advantage is more noticeable in several eight-worker layouts.
+
+The relatively short execution times and whole-program overhead may
+also limit the observable hardware advantage. Only one problem size
+was tested, so a larger performance gap for larger workloads remains
+a hypothesis rather than an established result.
 
 Limitations:
-All experiments were performed on one node, so multi-node scalability
-was not evaluated. Only one problem size and three runs per configuration
-were used for performance testing. Rank binding and thread affinity
-were not recorded, and whole-program timing includes file output and
-MPI startup/exit, preventing separate analysis of computation and
-communication costs.
+All experiments used one node, one performance problem size and
+three timed runs per configuration. Multi-node scalability was not
+evaluated, and actual rank binding and thread affinity were not
+recorded. Whole-program timing includes file output and MPI startup
+and exit, so computation and communication costs cannot be isolated.
+The LLVM IR analysis is specific to the tested Apple Clang compiler.
+Larger workloads and more worker configurations could help assess
+the hardware advantage more fully.
 
-Overall, the best measured result was obtained on the MacBook Pro with
-firstprivate, 4 MPI ranks and 2 threads per rank: 1.66 s, speedup 3.54
-and efficiency 44%.
+Overall, the best measured result was 1.66 s on the MacBook Pro using
+firstprivate with 4 MPI ranks and 2 threads per rank (3.54 speedup,
+44% efficiency). The final shared-with-local-copies implementation
+achieved 2.23 s on the MacBook Air in the main benchmark series
+(2.76 speedup, 35% efficiency), comparable to firstprivate.
